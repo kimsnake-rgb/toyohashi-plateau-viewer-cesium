@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:," />
+<title>豊橋plateauビューアcesium</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet" />
+<link href="https://cdn.jsdelivr.net/npm/cesium@1.121.0/Build/Cesium/Widgets/widgets.css" rel="stylesheet" />
+<style>
+  :root{
+    --panel-bg: rgba(255,255,255,.94);
+    --panel-fg: #1c2420;
+    --panel-sub: #5a665f;
+    --panel-line: rgba(28,36,32,.14);
+    --accent: #c9502e;
+    --accent-soft: rgba(201,80,46,.12);
+    --chip-bg: rgba(28,36,32,.06);
+    --shadow: 0 6px 24px rgba(20,30,25,.22);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --panel-bg: rgba(24,30,27,.94);
+      --panel-fg: #eef2ee;
+      --panel-sub: #a7b3ab;
+      --panel-line: rgba(238,242,238,.16);
+      --accent: #f0835f;
+      --accent-soft: rgba(240,131,95,.16);
+      --chip-bg: rgba(238,242,238,.08);
+      --shadow: 0 6px 24px rgba(0,0,0,.5);
+    }
+  }
+  *{ box-sizing:border-box; }
+  html,body{ height:100%; }
+  body{
+    margin:0; font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN","Yu Gothic UI","Yu Gothic",sans-serif;
+    color:var(--panel-fg); overflow:hidden; background:#dfe8dd;
+  }
+  #cesium{ position:fixed; inset:0; }
+  #cesium canvas{ outline:none; }
+  .cesium-viewer-bottom{ font-size:10px; opacity:.85; }
+
+  /* 読み込みオーバーレイ */
+  #loading{
+    position:fixed; inset:0; z-index:40; display:flex; flex-direction:column; gap:12px;
+    align-items:center; justify-content:center; background:rgba(232,239,230,.88); color:#33413a;
+    transition:opacity .5s ease; text-align:center; padding:24px;
+  }
+  @media (prefers-color-scheme: dark){ #loading{ background:rgba(29,36,33,.88); color:#cfd8d1; } }
+  #loading.done{ opacity:0; pointer-events:none; }
+  #loading .spin{
+    width:34px; height:34px; border-radius:50%; flex:none;
+    border:3px solid rgba(120,140,125,.35); border-top-color:#c9502e;
+    animation:spin 0.9s linear infinite;
+  }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce){ #loading .spin{ animation:none; } #loading .bar i{ animation:none; } }
+  #loading p{ margin:0; font-size:14px; line-height:1.7; }
+  #loading .sub{ font-size:12px; opacity:.75; }
+  #loading .bar{
+    width:min(260px,70vw); height:5px; border-radius:3px; overflow:hidden;
+    background:rgba(120,140,125,.3);
+  }
+  #loading .bar i{
+    display:block; height:100%; width:40%; border-radius:3px; background:#c9502e;
+    animation:slide 1.2s ease-in-out infinite alternate;
+  }
+  @keyframes slide{ from{ transform:translateX(-30%);} to{ transform:translateX(190%);} }
+  #load-retry{
+    display:none; font:inherit; font-size:13px; padding:8px 18px; border-radius:8px; cursor:pointer;
+    border:1px solid var(--panel-line); background:var(--panel-bg); color:var(--panel-fg); box-shadow:var(--shadow);
+  }
+  #loading.failed .spin, #loading.failed .bar{ display:none; }
+  #loading.failed #load-retry{ display:block; }
+  #nogl{ display:none; max-width:420px; font-size:13px; line-height:1.8; }
+
+  /* コントロールパネル */
+  #panel{
+    position:fixed; z-index:20; top:calc(10px + env(safe-area-inset-top)); left:10px;
+    width:272px; max-width:calc(100vw - 20px);
+    background:var(--panel-bg); border:1px solid var(--panel-line); border-radius:14px;
+    box-shadow:var(--shadow); backdrop-filter:blur(6px);
+    overflow:hidden;
+  }
+  #panel-head{
+    display:flex; align-items:center; gap:8px; width:100%;
+    padding:10px 12px; background:none; border:0; cursor:pointer; color:var(--panel-fg);
+    font:inherit; text-align:left;
+  }
+  #panel-head .ttl{ font-size:14px; font-weight:700; letter-spacing:.02em; flex:1; }
+  #panel-head .ttl small{ display:block; font-size:11px; font-weight:400; color:var(--panel-sub); margin-top:1px; }
+  #panel-head .chev{ font-size:12px; color:var(--panel-sub); transition:transform .25s ease; }
+  #panel.closed #panel-head .chev{ transform:rotate(-90deg); }
+  #panel-body{ padding:2px 12px 12px; max-height:calc(100dvh - 130px); overflow-y:auto; }
+  #panel.closed #panel-body{ display:none; }
+  .sect{ margin-top:10px; }
+  .sect:first-child{ margin-top:2px; }
+  .sect-label{ font-size:11px; font-weight:700; color:var(--panel-sub); margin-bottom:6px; }
+  .seg{ display:flex; background:var(--chip-bg); border-radius:9px; padding:3px; gap:3px; }
+  .seg button{
+    flex:1; border:0; background:transparent; color:var(--panel-fg); font:inherit; font-size:12px;
+    padding:7px 2px; border-radius:7px; cursor:pointer; white-space:nowrap; line-height:1.3;
+  }
+  .seg button.on{ background:var(--panel-bg); box-shadow:0 1px 4px rgba(0,0,0,.18); font-weight:700; color:var(--accent); }
+  .seg button:disabled{ opacity:.55; cursor:wait; }
+  .btn-row{ display:flex; gap:6px; }
+  .btn-row button{
+    flex:1; font:inherit; font-size:12.5px; padding:8px 4px; border-radius:8px; cursor:pointer;
+    border:1px solid var(--panel-line); background:var(--chip-bg); color:var(--panel-fg);
+  }
+  .btn-row button:active{ background:var(--accent-soft); }
+  .legend{ display:grid; grid-template-columns:1fr 1fr; gap:5px 10px; font-size:11.5px; }
+  .legend span{ display:flex; align-items:center; gap:6px; white-space:nowrap; overflow:hidden; }
+  .legend i{ width:11px; height:11px; border-radius:3px; flex:none; border:1px solid rgba(0,0,0,.18); }
+  .hint{ font-size:11px; line-height:1.65; color:var(--panel-sub); margin:0; }
+  .hint.warn{ color:var(--accent); margin-top:6px; }
+  .stats{ border-top:1px solid var(--panel-line); margin-top:12px; padding-top:10px; }
+  .stats dl{ margin:0; display:grid; grid-template-columns:auto 1fr; gap:3px 10px; font-size:12px; }
+  .stats dt{ color:var(--panel-sub); white-space:nowrap; }
+  .stats dd{ margin:0; text-align:right; font-weight:500; }
+  .stats p{ margin:8px 0 0; font-size:11px; line-height:1.6; color:var(--panel-sub); }
+  .stats a{ color:var(--accent); }
+
+  /* 建物属性カード */
+  #info{
+    position:fixed; z-index:25; top:calc(10px + env(safe-area-inset-top)); right:10px;
+    width:284px; max-width:calc(100vw - 20px); display:none;
+    background:var(--panel-bg); border:1px solid var(--panel-line); border-radius:14px;
+    box-shadow:var(--shadow); backdrop-filter:blur(6px); padding:12px 14px;
+  }
+  #info.show{ display:block; }
+  #info h3{ margin:0 26px 6px 0; font-size:14px; line-height:1.45; }
+  #info-close{
+    position:absolute; top:6px; right:6px; width:30px; height:30px; border:0; border-radius:8px;
+    background:transparent; color:var(--panel-sub); font-size:16px; cursor:pointer; line-height:1;
+  }
+  #info table{ border-collapse:collapse; font-size:12.5px; width:100%; }
+  #info td{ padding:2.5px 0; vertical-align:top; }
+  #info td.k{ color:var(--panel-sub); padding-right:12px; white-space:nowrap; }
+  #info td.v{ font-weight:500; text-align:right; font-variant-numeric:tabular-nums; word-break:break-all; }
+  #info .none{ font-size:12.5px; color:var(--panel-sub); margin:0; line-height:1.6; }
+
+  @media (max-width:640px){
+    #panel{ top:auto; bottom:calc(10px + env(safe-area-inset-bottom)); left:10px; right:10px; width:auto; }
+    #panel-body{ max-height:46dvh; }
+    #info{ top:calc(10px + env(safe-area-inset-top)); left:10px; right:10px; width:auto; }
+  }
+</style>
+</head>
+<body>
+<div id="cesium" aria-label="豊橋駅前の3D都市モデル（Cesium 3D Tiles）"></div>
+
+<div id="loading" role="status">
+  <div class="spin" aria-hidden="true"></div>
+  <p><span id="load-msg">豊橋駅前の3D都市モデルを読み込んでいます</span><br /><span class="sub" id="load-sub">PLATEAU 豊橋市（2024年度）3D Tiles</span></p>
+  <div class="bar" aria-hidden="true"><i></i></div>
+  <p class="sub" id="load-progress"></p>
+  <button type="button" id="load-retry">再読み込み</button>
+  <p id="nogl">3Dライブラリまたは WebGL を利用できないため、表示を起動できませんでした。通信環境をご確認いただくか、WebGL対応ブラウザでお開きください。</p>
+</div>
+
+<section id="panel" aria-label="表示コントロール">
+  <button id="panel-head" type="button" aria-expanded="true" aria-controls="panel-body">
+    <span class="ttl">豊橋plateauビューアcesium<small>Cesium × PLATEAU 3D Tiles</small></span>
+    <span class="chev" aria-hidden="true">▾</span>
+  </button>
+  <div id="panel-body">
+    <div class="sect">
+      <div class="sect-label">タイル（建物モデル）</div>
+      <div class="seg" role="group" aria-label="タイル切替">
+        <button type="button" data-tileset="lod1" class="on">LOD1</button>
+        <button type="button" data-tileset="lod2">LOD2<br />軽量</button>
+        <button type="button" data-tileset="lod2tex">LOD2<br />テクスチャ</button>
+      </div>
+      <p class="hint warn" id="tex-warn" hidden>LOD2（テクスチャ付き）は通信量とメモリを多く使います。読み込みに時間がかかり、端末によっては表示が不安定になることがあります。うまく表示されない場合は「LOD2 軽量」をお選びください。</p>
+    </div>
+    <div class="sect">
+      <div class="sect-label">用途カラー</div>
+      <div class="legend" aria-label="用途別カラーの凡例">
+        <span><i style="background:#f0be4a"></i>住宅</span>
+        <span><i style="background:#e08a3c"></i>共同住宅</span>
+        <span><i style="background:#cd7f33"></i>店舗等併用住宅</span>
+        <span><i style="background:#b06a2c"></i>店舗等併用共同住宅</span>
+        <span><i style="background:#d64545"></i>商業施設</span>
+        <span><i style="background:#9b4d8f"></i>商業系複合施設</span>
+        <span><i style="background:#e77fb0"></i>宿泊施設</span>
+        <span><i style="background:#4a7fb5"></i>業務施設</span>
+        <span><i style="background:#3e8e5a"></i>官公庁施設</span>
+        <span><i style="background:#3aa79c"></i>文教厚生施設</span>
+        <span><i style="background:#7c8da6"></i>運輸倉庫施設</span>
+        <span><i style="background:#8a6d4f"></i>工場</span>
+        <span><i style="background:#b9beb9"></i>不明</span>
+        <span><i style="background:#c9c9bd"></i>その他</span>
+      </div>
+      <p class="hint" style="margin-top:6px;">建物は用途（bldg:usage）ごとに色分けしています。テクスチャ付きLOD2では外観を損ねないよう、淡い色を重ねて表示します。</p>
+    </div>
+    <div class="sect btn-row">
+      <button type="button" id="rotate-toggle" aria-pressed="false">回転を開始</button>
+      <button type="button" id="reset-view">視点リセット</button>
+    </div>
+    <div class="sect">
+      <p class="hint">ドラッグで回転、ピンチ／ホイールで拡大・縮小、二本指ドラッグ／右ドラッグで移動できます。建物をタップすると属性（用途・高さなど）を表示します。</p>
+    </div>
+    <div class="stats">
+      <dl>
+        <dt>データ</dt><dd>3D都市モデル 豊橋市（2024年度）</dd>
+        <dt>形式</dt><dd>Cesium 3D Tiles（建築物）</dd>
+        <dt>表示中心</dt><dd>豊橋駅（34.7628, 137.3820）</dd>
+      </dl>
+      <p>既定表示はLOD1（市全域の簡易モデル）です。建物の高さは、タイルに含まれる標高・ジオイド高の分（豊橋駅前で約47.5m）を補正し、地表に接地させています。LOD2軽量はより細かな形状のモデル、LOD2（テクスチャ付き）は駅東側の詳細エリアでは屋根形状と外観テクスチャを持つモデル、それ以外の範囲ではLOD1相当の形状を含むタイルセットです。</p>
+      <p>出典：国土交通省 Project PLATEAU「3D都市モデル 豊橋市（2024年度）」。データ配布：<a href="https://www.geospatial.jp/ckan/dataset/plateau-23201-toyohashi-shi-2024" target="_blank" rel="noopener">G空間情報センター</a>。背景地図：国土地理院「<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>（淡色）」。</p>
+    </div>
+  </div>
+</section>
+
+<aside id="info" aria-label="建物の属性">
+  <button type="button" id="info-close" aria-label="閉じる">×</button>
+  <h3 id="info-title">建物</h3>
+  <div id="info-body"></div>
+</aside>
+
+<script>window.CESIUM_BASE_URL = "https://cdn.jsdelivr.net/npm/cesium@1.121.0/Build/Cesium/";</script>
+<script src="https://cdn.jsdelivr.net/npm/cesium@1.121.0/Build/Cesium/Cesium.js"></script>
+<script>
+/* 第1CDN（jsDelivr）から Cesium 本体を読めなかった場合のみ、第2CDN（unpkg）から読み直す。
+   単一CDNの障害・遮断で「3D表示を起動できませんでした」になるのを防ぐ */
+if (typeof Cesium === "undefined") {
+  window.CESIUM_BASE_URL = "https://unpkg.com/cesium@1.121.0/Build/Cesium/";
+  document.write('<script src="https://unpkg.com/cesium@1.121.0/Build/Cesium/Cesium.js"><\/script>');
+}
+</script>
+<script>
+(function(){
+  "use strict";
+
+  var STATION = { lon: 137.3820, lat: 34.7628 };
+  var TILESETS = {
+    lod2tex: "https://assets.cms.plateau.reearth.io/assets/d0/913540-3985-48d1-9c38-814ca0e85e88/23201_toyohashi-shi_city_2024_citygml_2_op_bldg_3dtiles_lod2/tileset.json",
+    lod2:    "https://assets.cms.plateau.reearth.io/assets/0e/267a00-1a3a-4886-ac6d-a52f2092f722/23201_toyohashi-shi_city_2024_citygml_2_op_bldg_3dtiles_lod2_no_texture/tileset.json",
+    lod1:    "https://assets.cms.plateau.reearth.io/assets/ab/4a7e2c-6565-46e0-a515-f8967267f87b/23201_toyohashi-shi_city_2024_citygml_2_op_bldg_3dtiles_lod1/tileset.json"
+  };
+  var TILESET_NAMES = { lod2tex: "LOD2（テクスチャ付き）", lod2: "LOD2（軽量）", lod1: "LOD1" };
+  var USAGE_NAMES = {
+    "401": "業務施設", "402": "商業施設", "403": "宿泊施設", "404": "商業系複合施設",
+    "411": "住宅", "412": "共同住宅", "413": "店舗等併用住宅", "414": "店舗等併用共同住宅",
+    "421": "官公庁施設", "422": "文教厚生施設", "431": "運輸倉庫施設", "441": "工場", "461": "不明"
+  };
+  /* 用途別カラー（bldg:usage の名称に対応。凡例と一致させる） */
+  var USAGE_COLORS = {
+    "住宅": "#f0be4a", "共同住宅": "#e08a3c", "店舗等併用住宅": "#cd7f33",
+    "店舗等併用共同住宅": "#b06a2c", "作業所併用住宅": "#d99a44",
+    "商業施設": "#d64545", "商業系複合施設": "#9b4d8f", "宿泊施設": "#e77fb0",
+    "業務施設": "#4a7fb5", "官公庁施設": "#3e8e5a", "文教厚生施設": "#3aa79c",
+    "運輸倉庫施設": "#7c8da6", "工場": "#8a6d4f", "不明": "#b9beb9"
+  };
+  var DEFAULT_BUILDING_COLOR = "#c9c9bd";
+  /* 接地補正量：PLATEAUタイルの建物底面は「標高＋ジオイド高」を含む楕円体高で、
+     平らな地面（楕円体高0）から浮いて見える。実測では豊橋駅前の地表は
+     標高約8m＋ジオイド高約39.5m＝楕円体高約47.5mのため、その分だけ下げる */
+  var GROUND_DROP = 47.5;
+
+  var loading = document.getElementById("loading");
+  var loadMsg = document.getElementById("load-msg");
+  var loadProgress = document.getElementById("load-progress");
+  var retryBtn = document.getElementById("load-retry");
+  var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var isMobile = window.matchMedia("(pointer: coarse)").matches || window.innerWidth <= 640;
+
+  function showError(msg, showHelp){
+    loading.classList.remove("done");
+    loading.classList.add("failed");
+    loadMsg.textContent = msg;
+    loadProgress.textContent = "";
+    document.getElementById("nogl").style.display = showHelp ? "block" : "none";
+  }
+
+  /* 再試行ボタン: 通常は再読み込み、タイル読込失敗時はLOD1で再試行 */
+  var retryMode = "reload";
+  retryBtn.addEventListener("click", function(){
+    if (retryMode === "light"){
+      loading.classList.remove("failed");
+      loadTileset("lod1");
+    } else {
+      location.reload();
+    }
+  });
+
+  if (typeof Cesium === "undefined"){
+    showError("3D表示を起動できませんでした", true);
+    return;
+  }
+
+  /* ---- パネル開閉（スマホでは初期で折りたたむ） ---- */
+  var panel = document.getElementById("panel");
+  var head = document.getElementById("panel-head");
+  function setPanel(open){
+    panel.classList.toggle("closed", !open);
+    head.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  head.addEventListener("click", function(){ setPanel(panel.classList.contains("closed")); });
+  if (window.innerWidth <= 640) setPanel(false);
+
+  /* ---- Cesium Viewer ---- */
+  var viewer;
+  try {
+    viewer = new Cesium.Viewer("cesium", {
+      animation: false,
+      timeline: false,
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: false,
+      sceneModePicker: false,
+      navigationHelpButton: false,
+      fullscreenButton: false,
+      infoBox: false,
+      selectionIndicator: false,
+      baseLayer: false,
+      terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+      requestRenderMode: false,
+      useBrowserRecommendedResolution: true,
+      msaaSamples: isMobile ? 1 : 4,
+      contextOptions: { webgl: { antialias: !isMobile } }
+    });
+  } catch (e) {
+    showError("3D表示を起動できませんでした", true);
+    return;
+  }
+
+  viewer.scene.backgroundColor = new Cesium.Color(0.87, 0.91, 0.86, 1.0);
+  if (viewer.scene.sun) viewer.scene.sun.show = true;
+  viewer.scene.globe.enableLighting = false;
+  /* モバイルの描画・メモリ負荷を抑える */
+  viewer.resolutionScale = isMobile ? 0.8 : 1.0;
+  if (viewer.scene.skyBox) viewer.scene.skyBox.show = false;
+  if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = false;
+  viewer.scene.postProcessStages.fxaa.enabled = !isMobile;
+  viewer.scene.screenSpaceCameraController.minimumZoomDistance = 60;
+  /* 市全域を一気に読み込ませないようズームアウト上限を絞る */
+  viewer.scene.screenSpaceCameraController.maximumZoomDistance = 3500;
+
+  /* 背景：地理院タイル（淡色） */
+  viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+    url: "https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png",
+    maximumLevel: 18,
+    credit: "地理院タイル（国土地理院）"
+  }));
+
+  var CENTER = Cesium.Cartesian3.fromDegrees(STATION.lon, STATION.lat, 0);
+  var HOME_DEST = Cesium.Cartesian3.fromDegrees(STATION.lon - 0.0105, STATION.lat - 0.0080, 1100);
+
+  /* ---- 自動回転（駅を中心に周回） ---- */
+  var rotating = false, flying = false, lastTick = null;
+  var rotateBtn = document.getElementById("rotate-toggle");
+  var ROT_SPEED = Cesium.Math.toRadians(1.0); /* 1秒あたり約1度 */
+  var tmpN = new Cesium.Cartesian3(), tmpOff = new Cesium.Cartesian3(),
+      tmpPos = new Cesium.Cartesian3(), tmpDir = new Cesium.Cartesian3(), tmpUp = new Cesium.Cartesian3();
+
+  function setRotateUI(){
+    rotateBtn.textContent = rotating ? "回転を止める" : "回転を開始";
+    rotateBtn.setAttribute("aria-pressed", rotating ? "true" : "false");
+  }
+  function startRotate(){ if (!rotating){ rotating = true; lastTick = null; setRotateUI(); } }
+  function stopRotate(){ if (rotating){ rotating = false; setRotateUI(); } }
+  rotateBtn.addEventListener("click", function(){ rotating ? stopRotate() : startRotate(); });
+
+  viewer.clock.onTick.addEventListener(function(){
+    if (!rotating || flying) { lastTick = null; return; }
+    var now = performance.now();
+    if (lastTick === null){ lastTick = now; return; }
+    var dt = Math.min((now - lastTick) / 1000, 0.1);
+    lastTick = now;
+    var cam = viewer.camera;
+    Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(CENTER, tmpN);
+    var q = Cesium.Quaternion.fromAxisAngle(tmpN, -ROT_SPEED * dt);
+    var m = Cesium.Matrix3.fromQuaternion(q);
+    Cesium.Cartesian3.subtract(cam.position, CENTER, tmpOff);
+    Cesium.Matrix3.multiplyByVector(m, tmpOff, tmpOff);
+    Cesium.Cartesian3.add(CENTER, tmpOff, tmpPos);
+    Cesium.Matrix3.multiplyByVector(m, cam.direction, tmpDir);
+    Cesium.Matrix3.multiplyByVector(m, cam.up, tmpUp);
+    cam.setView({ destination: tmpPos, orientation: { direction: tmpDir, up: tmpUp } });
+  });
+
+  ["pointerdown", "wheel", "touchstart"].forEach(function(ev){
+    viewer.scene.canvas.addEventListener(ev, function(){ stopRotate(); }, { passive: true });
+  });
+
+  /* ---- 視点（ホーム） ---- */
+  function flyHome(duration, after){
+    flying = true;
+    viewer.camera.flyTo({
+      destination: HOME_DEST,
+      orientation: {
+        heading: Cesium.Math.toRadians(47),
+        pitch: Cesium.Math.toRadians(-50),
+        roll: 0
+      },
+      duration: duration,
+      complete: function(){ flying = false; if (after) after(); },
+      cancel: function(){ flying = false; }
+    });
+  }
+  /* 初回タイルが揃ってから導入フライト＋自動回転を開始（読み込み中の負荷競合を避ける） */
+  var introDone = false;
+  function startIntro(){
+    if (introDone) return;
+    introDone = true;
+    flyHome(2.4, function(){ if (!reduceMotion) startRotate(); });
+  }
+  /* 初期位置は即時セット（flyTo前の真っ白回避） */
+  viewer.camera.setView({
+    destination: HOME_DEST,
+    orientation: { heading: Cesium.Math.toRadians(47), pitch: Cesium.Math.toRadians(-50), roll: 0 }
+  });
+  document.getElementById("reset-view").addEventListener("click", function(){ flyHome(1.6); });
+
+  /* ---- 3D Tiles 読み込み・切替 ---- */
+  var currentTileset = null, currentKey = null, loadToken = 0;
+  var segBtns = Array.prototype.slice.call(document.querySelectorAll(".seg button"));
+  var texWarn = document.getElementById("tex-warn");
+
+  function setSegEnabled(enabled){
+    segBtns.forEach(function(b){ b.disabled = !enabled; });
+  }
+  function markSeg(key){
+    segBtns.forEach(function(b){ b.classList.toggle("on", b.getAttribute("data-tileset") === key); });
+    texWarn.hidden = key !== "lod2tex";
+  }
+
+  /* タイルセット全体を GROUND_DROP だけ下げ、建物を地表に接地させる */
+  function groundTileset(tileset){
+    var c = tileset.boundingSphere.center;
+    var carto = Cesium.Cartographic.fromCartesian(c);
+    var surface = Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, 0);
+    var lowered = Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, -GROUND_DROP);
+    var translation = Cesium.Cartesian3.subtract(lowered, surface, new Cesium.Cartesian3());
+    tileset.modelMatrix = Cesium.Matrix4.fromTranslation(translation);
+  }
+
+  function usageRawValue(feature){
+    var ids = (typeof feature.getPropertyIds === "function") ? feature.getPropertyIds() : [];
+    for (var i = 0; i < ids.length; i++){
+      if (String(ids[i]).toLowerCase().indexOf("usage") !== -1){
+        var v = feature.getProperty(ids[i]);
+        if (v !== undefined && v !== null && v !== "") return String(v);
+      }
+    }
+    return null;
+  }
+  function usageColorOf(feature, pale){
+    var name = null;
+    var raw = usageRawValue(feature);
+    if (raw){
+      var m = raw.match(/\d{3}/);
+      /* 値が3桁コードのみの場合は名称に変換、それ以外（日本語名称）はそのまま使う */
+      if (m && raw.replace(/[^0-9]/g, "") === m[0]) name = USAGE_NAMES[m[0]] || raw;
+      else name = raw;
+    }
+    var col = Cesium.Color.fromCssColorString(USAGE_COLORS[name] || DEFAULT_BUILDING_COLOR);
+    if (pale) col = Cesium.Color.lerp(col, Cesium.Color.WHITE, 0.62, new Cesium.Color());
+    return col;
+  }
+  /* タイルが読み込まれるたびに、その建物すべてへ用途カラーを適用する */
+  function attachUsageColors(tileset, pale){
+    tileset.tileLoad.addEventListener(function(tile){
+      var content = tile.content;
+      if (!content || typeof content.getFeature !== "function" || !content.featuresLength) return;
+      for (var i = 0; i < content.featuresLength; i++){
+        try {
+          var f = content.getFeature(i);
+          f.color = usageColorOf(f, pale);
+        } catch (e) {}
+      }
+    });
+  }
+
+  function loadTileset(key){
+    var token = ++loadToken;
+    retryMode = "reload";
+    markSeg(key);
+    setSegEnabled(false);
+    closeInfo();
+    loading.classList.remove("done", "failed");
+    document.getElementById("nogl").style.display = "none";
+    retryBtn.textContent = "再読み込み";
+    loadMsg.textContent = TILESET_NAMES[key] + " を読み込んでいます";
+    loadProgress.textContent = "";
+
+    if (currentTileset){
+      viewer.scene.primitives.remove(currentTileset);
+      currentTileset = null;
+    }
+
+    /* ウォッチドッグ：タイルセット取得が60秒応答しなければ、無限スピナーにせず再試行導線を出す */
+    var settled = false;
+    var watchdog = setTimeout(function(){
+      if (settled || token !== loadToken) return;
+      settled = true;
+      setSegEnabled(true);
+      if (key !== "lod1"){
+        retryMode = "light";
+        retryBtn.textContent = "LOD1で再試行";
+        showError("タイルの読み込みに時間がかかりすぎています。通信環境をご確認のうえ、軽量なLOD1でお試しください。", false);
+      } else {
+        retryMode = "reload";
+        retryBtn.textContent = "再読み込み";
+        showError("タイルの読み込みに時間がかかりすぎています。通信環境をご確認のうえ、再読み込みしてください。", false);
+      }
+    }, 60000);
+
+    Cesium.Cesium3DTileset.fromUrl(TILESETS[key], {
+      /* iOS WebViewのメモリ上限を超えないよう、全タイルセット共通で強めに制限 */
+      maximumScreenSpaceError: 32,
+      cacheBytes: 64 * 1024 * 1024,
+      maximumCacheOverflowBytes: 32 * 1024 * 1024,
+      skipLevelOfDetail: true,
+      baseScreenSpaceError: 1024,
+      skipScreenSpaceErrorFactor: 16,
+      skipLevels: 1,
+      loadSiblings: false,
+      cullRequestsWhileMoving: true
+    }).then(function(tileset){
+      settled = true;
+      clearTimeout(watchdog);
+      if (token !== loadToken){ viewer.scene.primitives.remove(tileset); return; }
+      currentTileset = tileset;
+      currentKey = key;
+      groundTileset(tileset);
+      attachUsageColors(tileset, key === "lod2tex");
+      viewer.scene.primitives.add(tileset);
+
+      tileset.loadProgress.addEventListener(function(pending, processing){
+        if (token !== loadToken) return;
+        if (pending > 0 || processing > 0){
+          loadProgress.textContent = "タイル取得中…（待機 " + pending + " 件／処理中 " + processing + " 件）";
+        }
+      });
+      var hide = function(){
+        if (token !== loadToken) return;
+        loading.classList.remove("failed");
+        loading.classList.add("done");
+        setSegEnabled(true);
+        startIntro();
+      };
+      tileset.initialTilesLoaded.addEventListener(hide);
+      /* 保険：一定時間でオーバーレイを閉じる */
+      setTimeout(hide, 30000);
+      setSegEnabled(true);
+    }).catch(function(){
+      settled = true;
+      clearTimeout(watchdog);
+      if (token !== loadToken) return;
+      setSegEnabled(true);
+      if (key !== "lod1"){
+        retryMode = "light";
+        retryBtn.textContent = "LOD1で再試行";
+        showError("タイルの読み込みに失敗しました。通信環境をご確認のうえ、軽量なLOD1でお試しください。", false);
+      } else {
+        retryMode = "reload";
+        retryBtn.textContent = "再読み込み";
+        showError("タイルの読み込みに失敗しました。通信環境をご確認のうえ、再読み込みしてください。", false);
+      }
+    });
+  }
+
+  segBtns.forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var key = btn.getAttribute("data-tileset");
+      if (key !== currentKey) loadTileset(key);
+    });
+  });
+
+  /* ---- 建物タップで属性表示 ---- */
+  var info = document.getElementById("info");
+  var infoTitle = document.getElementById("info-title");
+  var infoBody = document.getElementById("info-body");
+  var highlighted = null;
+
+  function clearHighlight(){
+    if (highlighted){
+      /* ハイライト解除時は白ではなく用途カラーに戻す */
+      try { highlighted.color = usageColorOf(highlighted, currentKey === "lod2tex"); } catch (e) {}
+      highlighted = null;
+    }
+  }
+  function closeInfo(){ info.classList.remove("show"); clearHighlight(); }
+  document.getElementById("info-close").addEventListener("click", closeInfo);
+
+  function findProp(props, test){
+    for (var i = 0; i < props.length; i++){
+      if (test(props[i].key.toLowerCase())) return props[i];
+    }
+    return null;
+  }
+  function esc(s){
+    return String(s).replace(/[&<>"']/g, function(c){
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function showFeature(feature){
+    var ids = (typeof feature.getPropertyIds === "function") ? feature.getPropertyIds() : [];
+    var props = [];
+    ids.forEach(function(id){
+      var v = feature.getProperty(id);
+      if (v === undefined || v === null || v === "") return;
+      props.push({ key: String(id), value: v });
+    });
+
+    var nameP = findProp(props, function(k){ return k === "gml:name" || k === "name" || /:name$/.test(k); });
+    var usageP = findProp(props, function(k){ return k.indexOf("usage") !== -1; });
+    var heightP = findProp(props, function(k){ return k.indexOf("measuredheight") !== -1; });
+    var idP = findProp(props, function(k){ return k === "gml_id" || k.indexOf("gml_id") !== -1; });
+
+    var usageName = null, usageCode = null;
+    if (usageP){
+      var rawU = String(usageP.value).trim();
+      var m = rawU.match(/\d{3}/);
+      if (m && rawU.replace(/[^0-9]/g, "") === m[0]){
+        /* 値が3桁コードのみの場合 */
+        usageCode = m[0];
+        usageName = USAGE_NAMES[usageCode] || rawU;
+      } else {
+        /* 値は日本語の用途名称そのもの */
+        usageName = rawU;
+      }
+    }
+
+    infoTitle.textContent = (nameP && String(nameP.value).trim()) ? String(nameP.value)
+      : (usageName || "建物");
+
+    var rows = "";
+    if (usageP){
+      rows += "<tr><td class='k'>用途</td><td class='v'>" +
+        esc(usageCode ? usageName + "（" + usageCode + "）" : usageName) + "</td></tr>";
+    }
+    if (heightP && !isNaN(parseFloat(heightP.value))){
+      rows += "<tr><td class='k'>計測高さ</td><td class='v'>" + parseFloat(heightP.value).toFixed(1) + " m</td></tr>";
+    }
+    if (idP){
+      rows += "<tr><td class='k'>建物ID</td><td class='v'>" + esc(idP.value) + "</td></tr>";
+    }
+    var used = [nameP, usageP, heightP, idP];
+    var extra = 0;
+    props.forEach(function(p){
+      if (extra >= 5 || used.indexOf(p) !== -1) return;
+      if (typeof p.value === "object") return;
+      var s = String(p.value);
+      if (s.length > 60) return;
+      rows += "<tr><td class='k'>" + esc(p.key) + "</td><td class='v'>" + esc(s) + "</td></tr>";
+      extra++;
+    });
+
+    infoBody.innerHTML = rows ? "<table>" + rows + "</table>"
+      : "<p class='none'>この建物には表示できる属性が含まれていません。</p>";
+    info.classList.add("show");
+
+    clearHighlight();
+    if (feature instanceof Cesium.Cesium3DTileFeature){
+      highlighted = feature;
+      try { feature.color = new Cesium.Color(1.0, 0.55, 0.25, 1.0); } catch (e) {}
+    }
+  }
+
+  var handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+  handler.setInputAction(function(click){
+    var picked = viewer.scene.pick(click.position);
+    if (picked && typeof picked.getPropertyIds === "function"){
+      showFeature(picked);
+    } else {
+      closeInfo();
+    }
+  }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+  /* ---- 開始（既定はLOD1：市全域・用途別カラー・接地補正済み） ---- */
+  loadTileset("lod1");
+})();
+</script>
+</body>
+</html>
