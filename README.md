@@ -1,4 +1,6 @@
-# 豊橋plateauビューアcesium
+# toyohashi plateauビューアcesium
+
+**公開URL： https://toyohashi-plateau-viewer-cesium.pages.dev/**
 
 PLATEAU（国土交通省）3D都市モデル 豊橋市（2024年度）の公式3D Tilesを使い、豊橋駅前をCesiumで俯瞰表示するビューアです。
 
